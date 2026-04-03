@@ -28,13 +28,17 @@ class Plugin(IOCXPlugin):
     MAX_TOTAL_SIZE = 500 * 1024 * 1024 # 500 MB
     MAX_ENTRIES = 1000
 
-    def detect(self, text: str, ctx) -> List[Detection]:
-        """
-        Entry point for the plugin. `ctx` provides:
-          - ctx.path: path to the input file
-          - ctx.engine: engine instance for recursive analysis
-          - ctx.depth: recursion depth
-        """
+    metadata = PluginMetadata(
+        id="iocx-archive",
+        name="Archive Detector",
+        version="1.0.0",
+        description="Archive detector for IOCX (zip, tar, 7z) with safety limits",
+        author="MalX Labs",
+        capabilities=["detector"],
+        iocx_min_version="0.4.0",
+    )
+
+    def detect(self, text: str, ctx: PluginContext) -> List[Detection]:
         detections: List[Detection] = []
 
         path = getattr(ctx, "path", None)
@@ -45,7 +49,6 @@ class Plugin(IOCXPlugin):
         if not archive_type:
             return detections
 
-        # Emit archive metadata detection
         detections.append(
             Detection(
                 category="archive",
@@ -59,7 +62,6 @@ class Plugin(IOCXPlugin):
             )
         )
 
-        # Extract + recursively analyse
         with tempfile.TemporaryDirectory() as tmpdir:
             self._extract_and_analyze(
                 path=path,
@@ -94,6 +96,7 @@ class Plugin(IOCXPlugin):
 
         if py7zr and py7zr.is_7zfile(path):
             return "7z"
+
         return None
 
     # ----------------------------------------------------------------------
@@ -115,8 +118,10 @@ class Plugin(IOCXPlugin):
 
         if archive_type == "zip":
             self._handle_zip(path, tmpdir, ctx, detections, depth)
+
         elif archive_type == "tar":
             self._handle_tar(path, tmpdir, ctx, detections, depth)
+
         elif archive_type == "tar_error":
             detections.append(
                 Detection(
@@ -128,6 +133,7 @@ class Plugin(IOCXPlugin):
                 )
             )
             return
+
         elif archive_type == "7z":
             self._handle_7z(path, tmpdir, ctx, detections, depth)
 
@@ -141,6 +147,7 @@ class Plugin(IOCXPlugin):
 
         with zipfile.ZipFile(path, "r") as zf:
             for info in zf.infolist():
+
                 if entry_count >= self.MAX_ENTRIES:
                     break
 
@@ -163,15 +170,35 @@ class Plugin(IOCXPlugin):
                     )
                     break
 
-                # Per-entry size limit
-                if info.file_size > self.MAX_ENTRY_SIZE:
+                # ZIP bomb heuristic
+                uncompressed = info.file_size
+                compressed = getattr(info, "compress_size", 0)
+
+                if compressed < 1024 and uncompressed > self.MAX_ENTRY_SIZE:
                     detections.append(
                         Detection(
                             category="archive_warning",
                             value="archive_entry_size_limit_reached",
                             metadata={
                                 "entry_name": info.filename,
-                                "size": info.file_size,
+                                "declared_size": uncompressed,
+                                "compressed_size": compressed,
+                            },
+                            start=0,
+                            end=0,
+                        )
+                    )
+                    continue
+
+                # Per-entry size limit
+                if uncompressed > self.MAX_ENTRY_SIZE:
+                    detections.append(
+                        Detection(
+                            category="archive_warning",
+                            value="archive_entry_size_limit_reached",
+                            metadata={
+                                "entry_name": info.filename,
+                                "size": uncompressed,
                             },
                             start=0,
                             end=0,
@@ -195,12 +222,10 @@ class Plugin(IOCXPlugin):
 
                 zf.extract(info, path=tmpdir)
 
-                # Recurse into engine
                 detections.extend(
                     self._analyze_extracted_file(safe_path, ctx, depth + 1)
                 )
 
-                # Surface entry name (for unicode/path tests etc.)
                 detections.append(
                     Detection(
                         category="archive_info",
@@ -219,6 +244,7 @@ class Plugin(IOCXPlugin):
         try:
             with tarfile.open(path, "r:*") as tf:
                 for member in tf.getmembers():
+
                     if not member.isfile():
                         continue
 
@@ -248,6 +274,7 @@ class Plugin(IOCXPlugin):
                         continue
 
                     tf.extract(member, path=tmpdir)
+
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
@@ -261,6 +288,7 @@ class Plugin(IOCXPlugin):
                             end=0,
                         )
                     )
+
         except Exception:
             detections.append(
                 Detection(
@@ -293,13 +321,14 @@ class Plugin(IOCXPlugin):
             with py7zr.SevenZipFile(path, mode="r") as z:
                 z.extractall(path=tmpdir)
 
-            # Walk extracted files
             for root, _, files in os.walk(tmpdir):
                 for f in files:
                     full = os.path.join(root, f)
+
                     detections.extend(
                         self._analyze_extracted_file(full, ctx, depth + 1)
                     )
+
                     detections.append(
                         Detection(
                             category="archive_info",
@@ -309,6 +338,7 @@ class Plugin(IOCXPlugin):
                             end=0,
                         )
                     )
+
         except Exception:
             detections.append(
                 Detection(
@@ -326,7 +356,8 @@ class Plugin(IOCXPlugin):
 
     def _safe_join(self, root: str, name: str) -> Optional[str]:
         joined = os.path.normpath(os.path.join(root, name))
-        if not joined.startswith(os.path.abspath(root)):
+        root_abs = os.path.abspath(root)
+        if not os.path.abspath(joined).startswith(root_abs):
             return None
         return joined
 
@@ -334,4 +365,3 @@ class Plugin(IOCXPlugin):
         if not hasattr(ctx, "engine"):
             return []
         return ctx.engine.analyze_file(path, depth=depth)
-
