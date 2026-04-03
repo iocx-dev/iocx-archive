@@ -319,21 +319,34 @@ class Plugin(IOCXPlugin):
 
         try:
             with py7zr.SevenZipFile(path, mode="r") as z:
-                z.extractall(path=tmpdir)
+                members = z.getnames()
 
-            for root, _, files in os.walk(tmpdir):
-                for f in files:
-                    full = os.path.join(root, f)
+                for name in members:
+                    safe_path = self._safe_join(tmpdir, name)
+                    if not safe_path:
+                        detections.append(
+                            Detection(
+                                category="archive_warning",
+                                value="archive_path_traversal_blocked",
+                                metadata={"entry_name": name},
+                                start=0,
+                                end=0,
+                            )
+                        )
+                        continue
+
+                    # Extract only this member
+                    z.extract(targets=[name], path=tmpdir)
 
                     detections.extend(
-                        self._analyze_extracted_file(full, ctx, depth + 1)
+                        self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
 
                     detections.append(
                         Detection(
                             category="archive_info",
                             value="archive_entry_extracted",
-                            metadata={"entry_name": os.path.relpath(full, tmpdir)},
+                            metadata={"entry_name": name},
                             start=0,
                             end=0,
                         )
