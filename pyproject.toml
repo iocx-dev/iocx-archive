@@ -1,0 +1,41 @@
+[project]
+name = "iocx-archive"
+version = "0.1.0"
+description = "IOCX plugin for safe, deterministic extraction and recursive analysis of ZIP, TAR, and 7z archives."
+authors = [
+    { name = "MalX Labs" }
+]
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+dependencies = [
+    "iocx",
+    "py7zr>=0.20.0",
+]
+
+keywords = [
+    "iocx",
+    "static-analysis",
+    "malware-analysis",
+    "archive",
+    "zip",
+    "tar",
+    "7z",
+    "security",
+]
+
+[project.urls]
+Homepage = "https://github.com/iocx-dev/iocx-archive"
+Repository = "https://github.com/iocx-dev/iocx-archive"
+Issues = "https://github.com/iocx-dev/iocx-archive/issues"
+
+[project.entry-points."iocx.plugins"]
+archive = "iocx_archive.plugin:Plugin"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
