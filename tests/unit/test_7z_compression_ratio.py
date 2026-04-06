@@ -18,6 +18,7 @@ class FakeCtx:
         self.path = path
         self.engine = engine
         self.depth = depth
+        self.metadata = {}
 
 
 def test_7z_suspicious_compression_ratio(monkeypatch):

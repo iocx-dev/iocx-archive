@@ -161,15 +161,20 @@ class Plugin(IOCXPlugin):
 
                     safe_path = self._safe_join(tmpdir, info.filename)
                     if not safe_path:
-                        detections.append(
-                            Detection(
-                                category="archive_warning",
-                                value="archive_path_traversal_blocked",
-                                metadata={"entry_name": info.filename},
-                                start=0,
-                                end=0,
-                            )
+                        det = Detection(
+                            category="archive_warning",
+                            value="archive_path_traversal_blocked",
+                            metadata={"entry_name": info.filename},
+                            start=0,
+                            end=0,
                         )
+                        detections.append(det)
+
+                        # expose warning in metadata
+                        ctx.metadata.setdefault("archive_warnings", []).append({
+                            "value": det.value,
+                            "entry_name": info.filename,
+                        })
                         continue
 
                     # ensure directories exist
@@ -179,39 +184,56 @@ class Plugin(IOCXPlugin):
                         with zf.open(info, "r") as src, open(safe_path, "wb") as dst:
                             dst.write(src.read())
                     except Exception:
-                        detections.append(
-                            Detection(
-                                category="archive_warning",
-                                value="archive_zip_entry_error",
-                                metadata={"entry_name": info.filename},
-                                start=0,
-                                end=0,
-                            )
+                        det = Detection(
+                            category="archive_warning",
+                            value="archive_zip_entry_error",
+                            metadata={"entry_name": info.filename},
+                            start=0,
+                            end=0,
                         )
+                        detections.append(det)
+
+                        # expose warning in metadata
+                        ctx.metadata.setdefault("archive_warnings", []).append({
+                            "value": det.value,
+                            "entry_name": info.filename,
+                        })
                         continue
 
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
-                    detections.append(
-                        Detection(
-                            category="archive_info",
-                            value="archive_entry_extracted",
-                            metadata={"entry_name": info.filename},
-                            start=0,
-                            end=0,
-                        )
+
+                    det = Detection(
+                        category="archive_info",
+                        value="archive_entry_extracted",
+                        metadata={"entry_name": info.filename},
+                        start=0,
+                        end=0,
                     )
+                    detections.append(det)
+
+                    # expose extraction info in metadata
+                    ctx.metadata.setdefault("archive_entries", []).append({
+                        "entry_name": info.filename,
+                        "status": "extracted",
+                    })
+
         except Exception:
-            detections.append(
-                Detection(
-                    category="archive_warning",
-                    value="archive_zip_error",
-                    metadata={"path": path},
-                    start=0,
-                    end=0,
-                )
+            det = Detection(
+                category="archive_warning",
+                value="archive_zip_error",
+                metadata={"path": path},
+                start=0,
+                end=0,
             )
+            detections.append(det)
+
+            # expose fatal ZIP error in metadata
+            ctx.metadata.setdefault("archive_warnings", []).append({
+                "value": det.value,
+                "path": path,
+            })
 
     # ----------------------------------------------------------------------
     # TAR Handling
@@ -237,15 +259,20 @@ class Plugin(IOCXPlugin):
 
                     safe_path = self._safe_join(tmpdir, member.name)
                     if not safe_path:
-                        detections.append(
-                            Detection(
-                                category="archive_warning",
-                                value="archive_path_traversal_blocked",
-                                metadata={"entry_name": member.name},
-                                start=0,
-                                end=0,
-                            )
+                        det = Detection(
+                            category="archive_warning",
+                            value="archive_path_traversal_blocked",
+                            metadata={"entry_name": member.name},
+                            start=0,
+                            end=0,
                         )
+                        detections.append(det)
+
+                        # expose warning in metadata
+                        ctx.metadata.setdefault("archive_warnings", []).append({
+                            "value": det.value,
+                            "entry_name": member.name,
+                        })
                         continue
 
                     # ensure directories exist
@@ -254,52 +281,76 @@ class Plugin(IOCXPlugin):
                     try:
                         f = tf.extractfile(member)
                         if not f:
-                            detections.append(
-                                Detection(
-                                    category="archive_warning",
-                                    value="archive_tar_entry_error",
-                                    metadata={"entry_name": member.name},
-                                    start=0,
-                                    end=0,
-                                )
-                            )
-                            continue
-                        with f, open(safe_path, "wb") as out:
-                            out.write(f.read())
-                    except Exception:
-                        detections.append(
-                            Detection(
+                            det = Detection(
                                 category="archive_warning",
                                 value="archive_tar_entry_error",
                                 metadata={"entry_name": member.name},
                                 start=0,
                                 end=0,
                             )
+                            detections.append(det)
+
+                            # expose warning in metadata
+                            ctx.metadata.setdefault("archive_warnings", []).append({
+                                "value": det.value,
+                                "entry_name": member.name,
+                            })
+                            continue
+
+                        with f, open(safe_path, "wb") as out:
+                            out.write(f.read())
+
+                    except Exception:
+                        det = Detection(
+                            category="archive_warning",
+                            value="archive_tar_entry_error",
+                            metadata={"entry_name": member.name},
+                            start=0,
+                            end=0,
                         )
+                        detections.append(det)
+
+                        # expose warning in metadata
+                        ctx.metadata.setdefault("archive_warnings", []).append({
+                            "value": det.value,
+                            "entry_name": member.name,
+                        })
                         continue
 
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
-                    detections.append(
-                        Detection(
-                            category="archive_info",
-                            value="archive_entry_extracted",
-                            metadata={"entry_name": member.name},
-                            start=0,
-                            end=0,
-                        )
+
+                    det = Detection(
+                        category="archive_info",
+                        value="archive_entry_extracted",
+                        metadata={"entry_name": member.name},
+                        start=0,
+                        end=0,
                     )
+                    detections.append(det)
+
+                    # expose extraction info in metadata
+                    ctx.metadata.setdefault("archive_entries", []).append({
+                        "entry_name": member.name,
+                        "status": "extracted",
+                    })
+
         except Exception:
-            detections.append(
-                Detection(
-                    category="archive_warning",
-                    value="archive_tar_error",
-                    metadata={"path": path},
-                    start=0,
-                    end=0,
-                )
+            det = Detection(
+                category="archive_warning",
+                value="archive_tar_error",
+                metadata={"path": path},
+                start=0,
+                end=0,
             )
+            detections.append(det)
+
+            # expose fatal TAR error in metadata
+            ctx.metadata.setdefault("archive_warnings", []).append({
+                "value": det.value,
+                "path": path,
+            })
 
     # ----------------------------------------------------------------------
     # 7z Handling
@@ -307,15 +358,20 @@ class Plugin(IOCXPlugin):
 
     def _handle_7z(self, path, tmpdir, ctx, detections, depth):
         if not py7zr:
-            detections.append(
-                Detection(
-                    category="archive_warning",
-                    value="archive_7z_unsupported",
-                    metadata={"path": path},
-                    start=0,
-                    end=0,
-                )
+            det = Detection(
+                category="archive_warning",
+                value="archive_7z_unsupported",
+                metadata={"path": path},
+                start=0,
+                end=0,
             )
+            detections.append(det)
+
+            # expose in metadata
+            ctx.metadata.setdefault("archive_warnings", []).append({
+                "value": det.value,
+                "path": path,
+            })
             return
 
         state = ArchiveState()
@@ -346,38 +402,51 @@ class Plugin(IOCXPlugin):
                     if result == "skip":
                         continue
 
+                    # Suspicious compression ratio
                     if (
                         compressed is not None
                         and uncompressed is not None
                         and compressed < 1024
                         and uncompressed > self.policy.MAX_ENTRY_SIZE
                     ):
-                        detections.append(
-                            Detection(
-                                category="archive_warning",
-                                value="archive_suspicious_compression_ratio",
-                                metadata={
-                                    "entry_name": name,
-                                    "compressed": compressed,
-                                    "uncompressed": uncompressed,
-                                    "ratio": float(uncompressed / max(1, compressed)),
-                                },
-                                start=0,
-                                end=0,
-                            )
+                        det = Detection(
+                            category="archive_warning",
+                            value="archive_suspicious_compression_ratio",
+                            metadata={
+                                "entry_name": name,
+                                "compressed": compressed,
+                                "uncompressed": uncompressed,
+                                "ratio": float(uncompressed / max(1, compressed)),
+                            },
+                            start=0,
+                            end=0,
                         )
+                        detections.append(det)
+
+                        # expose in metadata
+                        ctx.metadata.setdefault("archive_warnings", []).append({
+                            "value": det.value,
+                            "entry_name": name,
+                            "compressed": compressed,
+                            "uncompressed": uncompressed,
+                        })
 
                     safe_path = self._safe_join(tmpdir, name)
                     if not safe_path:
-                        detections.append(
-                            Detection(
-                                category="archive_warning",
-                                value="archive_path_traversal_blocked",
-                                metadata={"entry_name": name},
-                                start=0,
-                                end=0,
-                            )
+                        det = Detection(
+                            category="archive_warning",
+                            value="archive_path_traversal_blocked",
+                            metadata={"entry_name": name},
+                            start=0,
+                            end=0,
                         )
+                        detections.append(det)
+
+                        # expose in metadata
+                        ctx.metadata.setdefault("archive_warnings", []).append({
+                            "value": det.value,
+                            "entry_name": name,
+                        })
                         continue
 
                     # ensure directories exist
@@ -386,39 +455,56 @@ class Plugin(IOCXPlugin):
                     try:
                         z.extract(targets=[name], path=tmpdir)
                     except Exception:
-                        detections.append(
-                            Detection(
-                                category="archive_warning",
-                                value="archive_7z_entry_error",
-                                metadata={"entry_name": name},
-                                start=0,
-                                end=0,
-                            )
+                        det = Detection(
+                            category="archive_warning",
+                            value="archive_7z_entry_error",
+                            metadata={"entry_name": name},
+                            start=0,
+                            end=0,
                         )
+                        detections.append(det)
+
+                        # expose in metadata
+                        ctx.metadata.setdefault("archive_warnings", []).append({
+                            "value": det.value,
+                            "entry_name": name,
+                        })
                         continue
 
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
-                    detections.append(
-                        Detection(
-                            category="archive_info",
-                            value="archive_entry_extracted",
-                            metadata={"entry_name": name},
-                            start=0,
-                            end=0,
-                        )
+
+                    det = Detection(
+                        category="archive_info",
+                        value="archive_entry_extracted",
+                        metadata={"entry_name": name},
+                        start=0,
+                        end=0,
                     )
+                    detections.append(det)
+
+                    # expose extraction info
+                    ctx.metadata.setdefault("archive_entries", []).append({
+                        "entry_name": name,
+                        "status": "extracted",
+                    })
+
         except Exception:
-            detections.append(
-                Detection(
-                    category="archive_warning",
-                    value="archive_7z_error",
-                    metadata={"path": path},
-                    start=0,
-                    end=0,
-                )
+            det = Detection(
+                category="archive_warning",
+                value="archive_7z_error",
+                metadata={"path": path},
+                start=0,
+                end=0,
             )
+            detections.append(det)
+
+            # expose fatal error
+            ctx.metadata.setdefault("archive_warnings", []).append({
+                "value": det.value,
+                "path": path,
+            })
 
     # ----------------------------------------------------------------------
     # Helpers

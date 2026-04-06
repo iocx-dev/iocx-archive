@@ -23,6 +23,7 @@ class FakeCtx:
         self.path = path
         self.engine = engine
         self.depth = depth
+        self.metadata = {}
 
 
 def make_simple_tar(path):

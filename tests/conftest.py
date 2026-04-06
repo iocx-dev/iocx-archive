@@ -27,6 +27,7 @@ class FakeCtx:
         self.path = path
         self.engine = engine
         self.depth = depth
+        self.metadata = {}
 
 
 @pytest.fixture
