@@ -77,7 +77,7 @@ def test_archive_many_small_files_performance(tmp_path):
 def test_archive_large_file_limit(tmp_path):
     """Ensure large files are blocked quickly without blowing memory."""
     path = tmp_path / "large.zip"
-    make_zip(path, build_large_file(size_mb=plugin.MAX_ENTRY_SIZE // (1024 * 1024) + 1))
+    make_zip(path, build_large_file(size_mb=plugin.policy.MAX_ENTRY_SIZE // (1024 * 1024) + 1))
 
     engine = FakeEngine(plugin)
     ctx = FakeCtx(str(path), engine)

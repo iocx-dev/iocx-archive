@@ -23,12 +23,6 @@ class Plugin(IOCXPlugin):
     files back into the IOCX engine for recursive static analysis.
     """
 
-    # Default safety limits
-    MAX_DEPTH = 3
-    MAX_ENTRY_SIZE = 50 * 1024 * 1024 # 50 MB
-    MAX_TOTAL_SIZE = 500 * 1024 * 1024 # 500 MB
-    MAX_ENTRIES = 1000
-
     metadata = PluginMetadata(
         id="iocx-archive",
         name="Archive Detector",
@@ -39,9 +33,13 @@ class Plugin(IOCXPlugin):
         iocx_min_version="0.4.0",
     )
 
+    # Recursion depth is a plugin-level concern
+    MAX_DEPTH = 3
+
     def __init__(self):
         super().__init__()
         self.policy = ArchiveSafetyPolicy()
+
 
     def detect(self, text: str, ctx: PluginContext) -> List[Detection]:
         detections: List[Detection] = []
@@ -54,14 +52,13 @@ class Plugin(IOCXPlugin):
         if not archive_type:
             return detections
 
+        depth = getattr(ctx, "depth", 0)
+
         detections.append(
             Detection(
                 category="archive",
                 value=f"{archive_type}_archive",
-                metadata={
-                    "archive_type": archive_type,
-                    "depth": getattr(ctx, "depth", 0),
-                },
+                metadata={"archive_type": archive_type, "depth": depth},
                 start=0,
                 end=0,
             )
@@ -74,7 +71,7 @@ class Plugin(IOCXPlugin):
                 tmpdir=tmpdir,
                 ctx=ctx,
                 detections=detections,
-                depth=getattr(ctx, "depth", 0),
+                depth=depth,
             )
 
         return detections
@@ -108,7 +105,9 @@ class Plugin(IOCXPlugin):
     # Extraction + Recursion
     # ----------------------------------------------------------------------
 
-    def _extract_and_analyze(self, path, archive_type, tmpdir, ctx, detections, depth):
+    def _extract_and_analyze(
+        self, path, archive_type, tmpdir, ctx, detections, depth
+    ):
         if depth >= self.MAX_DEPTH:
             detections.append(
                 Detection(
@@ -123,10 +122,10 @@ class Plugin(IOCXPlugin):
 
         if archive_type == "zip":
             self._handle_zip(path, tmpdir, ctx, detections, depth)
-
         elif archive_type == "tar":
             self._handle_tar(path, tmpdir, ctx, detections, depth)
-
+        elif archive_type == "7z":
+            self._handle_7z(path, tmpdir, ctx, detections, depth)
         elif archive_type == "tar_error":
             detections.append(
                 Detection(
@@ -137,10 +136,6 @@ class Plugin(IOCXPlugin):
                     end=0,
                 )
             )
-            return
-
-        elif archive_type == "7z":
-            self._handle_7z(path, tmpdir, ctx, detections, depth)
 
     # ----------------------------------------------------------------------
     # ZIP Handling
@@ -148,71 +143,75 @@ class Plugin(IOCXPlugin):
 
     def _handle_zip(self, path, tmpdir, ctx, detections, depth):
         state = ArchiveState()
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
 
-        with zipfile.ZipFile(path, "r") as zf:
-            for info in zf.infolist():
+                    entry_size = info.file_size
 
-                if info.is_dir():
-                    continue
-
-                # Unified limits
-                result = self.policy.enforce_limits(state, info.file_size, detections, info.filename)
-                if result == "stop":
-                    break
-                if result == "skip":
-                    continue
-
-                # ZIP bomb heuristic
-                uncompressed = info.file_size
-                compressed = getattr(info, "compress_size", 0)
-
-                if compressed < 1024 and uncompressed > self.policy.MAX_ENTRY_SIZE:
-                    detections.append(
-                        Detection(
-                            category="archive_warning",
-                            value="archive_entry_size_limit_reached",
-                            metadata={
-                                "entry_name": info.filename,
-                                "declared_size": uncompressed,
-                                "compressed_size": compressed,
-                            },
-                            start=0,
-                            end=0,
-                        )
+                    result = self.policy.enforce_limits(
+                        state, entry_size, detections, info.filename
                     )
-                    continue
+                    if result == "stop":
+                        break
+                    if result == "skip":
+                        continue
 
-                # Path safety
-                safe_path = self._safe_join(tmpdir, info.filename)
-                if not safe_path:
+                    safe_path = self._safe_join(tmpdir, info.filename)
+                    if not safe_path:
+                        detections.append(
+                            Detection(
+                                category="archive_warning",
+                                value="archive_path_traversal_blocked",
+                                metadata={"entry_name": info.filename},
+                                start=0,
+                                end=0,
+                            )
+                        )
+                        continue
+
+                    # ensure directories exist
+                    os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+
+                    try:
+                        with zf.open(info, "r") as src, open(safe_path, "wb") as dst:
+                            dst.write(src.read())
+                    except Exception:
+                        detections.append(
+                            Detection(
+                                category="archive_warning",
+                                value="archive_zip_entry_error",
+                                metadata={"entry_name": info.filename},
+                                start=0,
+                                end=0,
+                            )
+                        )
+                        continue
+
+                    detections.extend(
+                        self._analyze_extracted_file(safe_path, ctx, depth + 1)
+                    )
                     detections.append(
                         Detection(
-                            category="archive_warning",
-                            value="archive_path_traversal_blocked",
+                            category="archive_info",
+                            value="archive_entry_extracted",
                             metadata={"entry_name": info.filename},
                             start=0,
                             end=0,
                         )
                     )
-                    continue
-
-                # Extract safely
-                zf.extract(info, path=tmpdir)
-
-                # Recurse
-                detections.extend(
-                    self._analyze_extracted_file(safe_path, ctx, depth + 1)
+        except Exception:
+            detections.append(
+                Detection(
+                    category="archive_warning",
+                    value="archive_zip_error",
+                    metadata={"path": path},
+                    start=0,
+                    end=0,
                 )
-
-                detections.append(
-                    Detection(
-                        category="archive_info",
-                        value="archive_entry_extracted",
-                        metadata={"entry_name": info.filename},
-                        start=0,
-                        end=0,
-                    )
-                )
+            )
 
     # ----------------------------------------------------------------------
     # TAR Handling
@@ -220,22 +219,22 @@ class Plugin(IOCXPlugin):
 
     def _handle_tar(self, path, tmpdir, ctx, detections, depth):
         state = ArchiveState()
-
         try:
             with tarfile.open(path, "r:*") as tf:
                 for member in tf:
-
                     if not member.isfile():
                         continue
 
-                    # Unified limits
-                    result = self.policy.enforce_limits(state, member.size, detections, member.name)
+                    entry_size = member.size
+
+                    result = self.policy.enforce_limits(
+                        state, entry_size, detections, member.name
+                    )
                     if result == "stop":
                         break
                     if result == "skip":
                         continue
 
-                    # Path safety
                     safe_path = self._safe_join(tmpdir, member.name)
                     if not safe_path:
                         detections.append(
@@ -249,14 +248,39 @@ class Plugin(IOCXPlugin):
                         )
                         continue
 
-                    # Extract safely
-                    tf.extract(member, path=tmpdir)
+                    # ensure directories exist
+                    os.makedirs(os.path.dirname(safe_path), exist_ok=True)
 
-                    # Recurse
+                    try:
+                        f = tf.extractfile(member)
+                        if not f:
+                            detections.append(
+                                Detection(
+                                    category="archive_warning",
+                                    value="archive_tar_entry_error",
+                                    metadata={"entry_name": member.name},
+                                    start=0,
+                                    end=0,
+                                )
+                            )
+                            continue
+                        with f, open(safe_path, "wb") as out:
+                            out.write(f.read())
+                    except Exception:
+                        detections.append(
+                            Detection(
+                                category="archive_warning",
+                                value="archive_tar_entry_error",
+                                metadata={"entry_name": member.name},
+                                start=0,
+                                end=0,
+                            )
+                        )
+                        continue
+
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
-
                     detections.append(
                         Detection(
                             category="archive_info",
@@ -266,7 +290,6 @@ class Plugin(IOCXPlugin):
                             end=0,
                         )
                     )
-
         except Exception:
             detections.append(
                 Detection(
@@ -296,14 +319,10 @@ class Plugin(IOCXPlugin):
             return
 
         state = ArchiveState()
-
         try:
             with py7zr.SevenZipFile(path, mode="r") as z:
                 members = z.getnames()
-
                 for name in members:
-
-                    # Try to get metadata
                     try:
                         info = z.getinfo(name)
                         uncompressed = getattr(info, "uncompressed", None)
@@ -313,34 +332,41 @@ class Plugin(IOCXPlugin):
                         compressed = None
 
                     # Unknown size → treat as unsafe (fail-safe)
-                    entry_size = uncompressed if uncompressed is not None else (self.policy.MAX_ENTRY_SIZE + 1)
+                    entry_size = (
+                        uncompressed
+                        if uncompressed is not None
+                        else (self.policy.MAX_ENTRY_SIZE + 1)
+                    )
 
-                    # Unified limits
-                    result = self.policy.enforce_limits(state, entry_size, detections, name)
+                    result = self.policy.enforce_limits(
+                        state, entry_size, detections, name
+                    )
                     if result == "stop":
                         break
                     if result == "skip":
                         continue
 
-                    # Compression ratio heuristic (if metadata available)
-                    if compressed is not None and uncompressed is not None:
-                        if compressed < 1024 and uncompressed > self.policy.MAX_ENTRY_SIZE:
-                            detections.append(
-                                Detection(
-                                    category="archive_warning",
-                                    value="archive_entry_size_limit_reached",
-                                    metadata={
-                                        "entry_name": name,
-                                        "declared_size": uncompressed,
-                                        "compressed_size": compressed,
-                                    },
-                                    start=0,
-                                    end=0,
-                                )
+                    if (
+                        compressed is not None
+                        and uncompressed is not None
+                        and compressed < 1024
+                        and uncompressed > self.policy.MAX_ENTRY_SIZE
+                    ):
+                        detections.append(
+                            Detection(
+                                category="archive_warning",
+                                value="archive_suspicious_compression_ratio",
+                                metadata={
+                                    "entry_name": name,
+                                    "compressed": compressed,
+                                    "uncompressed": uncompressed,
+                                    "ratio": float(uncompressed / max(1, compressed)),
+                                },
+                                start=0,
+                                end=0,
                             )
-                            continue
+                        )
 
-                    # Path safety
                     safe_path = self._safe_join(tmpdir, name)
                     if not safe_path:
                         detections.append(
@@ -354,14 +380,26 @@ class Plugin(IOCXPlugin):
                         )
                         continue
 
-                    # Extract only this member
-                    z.extract(targets=[name], path=tmpdir)
+                    # ensure directories exist
+                    os.makedirs(os.path.dirname(safe_path), exist_ok=True)
 
-                    # Recurse
+                    try:
+                        z.extract(targets=[name], path=tmpdir)
+                    except Exception:
+                        detections.append(
+                            Detection(
+                                category="archive_warning",
+                                value="archive_7z_entry_error",
+                                metadata={"entry_name": name},
+                                start=0,
+                                end=0,
+                            )
+                        )
+                        continue
+
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
-
                     detections.append(
                         Detection(
                             category="archive_info",
@@ -371,7 +409,6 @@ class Plugin(IOCXPlugin):
                             end=0,
                         )
                     )
-
         except Exception:
             detections.append(
                 Detection(
@@ -387,14 +424,14 @@ class Plugin(IOCXPlugin):
     # Helpers
     # ----------------------------------------------------------------------
 
-    def _safe_join(self, root: str, name: str) -> Optional[str]:
-        joined = os.path.normpath(os.path.join(root, name))
-        root_abs = os.path.abspath(root)
-        if not os.path.abspath(joined).startswith(root_abs):
+    def _safe_join(self, base: str, *paths: str) -> Optional[str]:
+        candidate = os.path.normpath(os.path.join(base, *paths))
+        base_norm = os.path.normpath(base)
+        if os.path.commonprefix([candidate, base_norm]) != base_norm:
             return None
-        return joined
+        return candidate
 
-    def _analyze_extracted_file(self, path: str, ctx, depth: int) -> List[Detection]:
-        if not hasattr(ctx, "engine"):
-            return []
+    def _analyze_extracted_file(
+        self, path: str, ctx: PluginContext, depth: int
+    ) -> List[Detection]:
         return ctx.engine.analyze_file(path, depth=depth)

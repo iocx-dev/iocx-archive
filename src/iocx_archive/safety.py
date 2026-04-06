@@ -18,9 +18,14 @@ class ArchiveSafetyPolicy:
     MAX_ENTRY_SIZE = 50 * 1024 * 1024 # 50 MB
     MAX_TOTAL_SIZE = 200 * 1024 * 1024 # 200 MB
     MAX_ENTRIES = 500
-    MAX_DEPTH = 5
 
-    def enforce_limits(self, state: ArchiveState, entry_size: int, detections, entry_name: str):
+    def enforce_limits(
+        self,
+        state: ArchiveState,
+        entry_size: int,
+        detections,
+        entry_name: str,
+    ):
         """
         Returns:
             "ok" → safe to extract

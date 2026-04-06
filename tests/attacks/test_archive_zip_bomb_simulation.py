@@ -11,7 +11,7 @@ def test_zip_bomb_simulation(tmp_path):
     path = tmp_path / "bomb.zip"
 
     # Create a real “bomb-like” entry: huge uncompressed, small compressed
-    data = b"A" * (plugin.MAX_ENTRY_SIZE * 2)
+    data = b"A" * (plugin.policy.MAX_ENTRY_SIZE * 2)
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("bomb.txt", data)
 
