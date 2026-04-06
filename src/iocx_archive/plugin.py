@@ -7,6 +7,7 @@ from typing import List, Optional
 from iocx.plugins.api import IOCXPlugin
 from iocx.plugins.metadata import PluginMetadata
 from iocx.models import Detection, PluginContext
+from .safety import ArchiveSafetyPolicy, ArchiveState
 
 try:
     import py7zr
@@ -37,6 +38,10 @@ class Plugin(IOCXPlugin):
         capabilities=["detector"],
         iocx_min_version="0.4.0",
     )
+
+    def __init__(self):
+        super().__init__()
+        self.policy = ArchiveSafetyPolicy()
 
     def detect(self, text: str, ctx: PluginContext) -> List[Detection]:
         detections: List[Detection] = []
@@ -142,39 +147,26 @@ class Plugin(IOCXPlugin):
     # ----------------------------------------------------------------------
 
     def _handle_zip(self, path, tmpdir, ctx, detections, depth):
-        total_size = 0
-        entry_count = 0
+        state = ArchiveState()
 
         with zipfile.ZipFile(path, "r") as zf:
             for info in zf.infolist():
 
-                if entry_count >= self.MAX_ENTRIES:
-                    break
-
                 if info.is_dir():
                     continue
 
-                entry_count += 1
-                total_size += info.file_size
-
-                # Total size limit
-                if total_size > self.MAX_TOTAL_SIZE:
-                    detections.append(
-                        Detection(
-                            category="archive_warning",
-                            value="archive_total_size_limit_reached",
-                            metadata={"total_size": total_size},
-                            start=0,
-                            end=0,
-                        )
-                    )
+                # Unified limits
+                result = self.policy.enforce_limits(state, info.file_size, detections, info.filename)
+                if result == "stop":
                     break
+                if result == "skip":
+                    continue
 
                 # ZIP bomb heuristic
                 uncompressed = info.file_size
                 compressed = getattr(info, "compress_size", 0)
 
-                if compressed < 1024 and uncompressed > self.MAX_ENTRY_SIZE:
+                if compressed < 1024 and uncompressed > self.policy.MAX_ENTRY_SIZE:
                     detections.append(
                         Detection(
                             category="archive_warning",
@@ -183,22 +175,6 @@ class Plugin(IOCXPlugin):
                                 "entry_name": info.filename,
                                 "declared_size": uncompressed,
                                 "compressed_size": compressed,
-                            },
-                            start=0,
-                            end=0,
-                        )
-                    )
-                    continue
-
-                # Per-entry size limit
-                if uncompressed > self.MAX_ENTRY_SIZE:
-                    detections.append(
-                        Detection(
-                            category="archive_warning",
-                            value="archive_entry_size_limit_reached",
-                            metadata={
-                                "entry_name": info.filename,
-                                "size": uncompressed,
                             },
                             start=0,
                             end=0,
@@ -220,8 +196,10 @@ class Plugin(IOCXPlugin):
                     )
                     continue
 
+                # Extract safely
                 zf.extract(info, path=tmpdir)
 
+                # Recurse
                 detections.extend(
                     self._analyze_extracted_file(safe_path, ctx, depth + 1)
                 )
@@ -241,25 +219,23 @@ class Plugin(IOCXPlugin):
     # ----------------------------------------------------------------------
 
     def _handle_tar(self, path, tmpdir, ctx, detections, depth):
+        state = ArchiveState()
+
         try:
             with tarfile.open(path, "r:*") as tf:
-                for member in tf.getmembers():
+                for member in tf:
 
                     if not member.isfile():
                         continue
 
-                    if member.size > self.MAX_ENTRY_SIZE:
-                        detections.append(
-                            Detection(
-                                category="archive_warning",
-                                value="archive_entry_size_limit_reached",
-                                metadata={"entry_name": member.name},
-                                start=0,
-                                end=0,
-                            )
-                        )
+                    # Unified limits
+                    result = self.policy.enforce_limits(state, member.size, detections, member.name)
+                    if result == "stop":
+                        break
+                    if result == "skip":
                         continue
 
+                    # Path safety
                     safe_path = self._safe_join(tmpdir, member.name)
                     if not safe_path:
                         detections.append(
@@ -273,8 +249,10 @@ class Plugin(IOCXPlugin):
                         )
                         continue
 
+                    # Extract safely
                     tf.extract(member, path=tmpdir)
 
+                    # Recurse
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
@@ -317,11 +295,52 @@ class Plugin(IOCXPlugin):
             )
             return
 
+        state = ArchiveState()
+
         try:
             with py7zr.SevenZipFile(path, mode="r") as z:
                 members = z.getnames()
 
                 for name in members:
+
+                    # Try to get metadata
+                    try:
+                        info = z.getinfo(name)
+                        uncompressed = getattr(info, "uncompressed", None)
+                        compressed = getattr(info, "compressed", None)
+                    except Exception:
+                        uncompressed = None
+                        compressed = None
+
+                    # Unknown size → treat as unsafe (fail-safe)
+                    entry_size = uncompressed if uncompressed is not None else (self.policy.MAX_ENTRY_SIZE + 1)
+
+                    # Unified limits
+                    result = self.policy.enforce_limits(state, entry_size, detections, name)
+                    if result == "stop":
+                        break
+                    if result == "skip":
+                        continue
+
+                    # Compression ratio heuristic (if metadata available)
+                    if compressed is not None and uncompressed is not None:
+                        if compressed < 1024 and uncompressed > self.policy.MAX_ENTRY_SIZE:
+                            detections.append(
+                                Detection(
+                                    category="archive_warning",
+                                    value="archive_entry_size_limit_reached",
+                                    metadata={
+                                        "entry_name": name,
+                                        "declared_size": uncompressed,
+                                        "compressed_size": compressed,
+                                    },
+                                    start=0,
+                                    end=0,
+                                )
+                            )
+                            continue
+
+                    # Path safety
                     safe_path = self._safe_join(tmpdir, name)
                     if not safe_path:
                         detections.append(
@@ -338,6 +357,7 @@ class Plugin(IOCXPlugin):
                     # Extract only this member
                     z.extract(targets=[name], path=tmpdir)
 
+                    # Recurse
                     detections.extend(
                         self._analyze_extracted_file(safe_path, ctx, depth + 1)
                     )
