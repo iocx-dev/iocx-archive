@@ -54,15 +54,17 @@ class Plugin(IOCXPlugin):
 
         depth = getattr(ctx, "depth", 0)
 
-        detections.append(
-            Detection(
-                category="archive",
-                value=f"{archive_type}_archive",
-                metadata={"archive_type": archive_type, "depth": depth},
-                start=0,
-                end=0,
-            )
+        det = Detection(
+            category="archive",
+            value=f"{archive_type}_archive",
+            metadata={"archive_type": archive_type, "depth": depth},
+            start=0,
+            end=0,
         )
+        detections.append(det)
+
+        # record archive type in metadata
+        ctx.metadata.setdefault("archive_types", []).append(archive_type)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._extract_and_analyze(
@@ -109,16 +111,25 @@ class Plugin(IOCXPlugin):
         self, path, archive_type, tmpdir, ctx, detections, depth
     ):
         if depth >= self.MAX_DEPTH:
-            detections.append(
-                Detection(
-                    category="archive_warning",
-                    value="archive_max_depth_reached",
-                    metadata={"depth": depth, "max_depth": self.MAX_DEPTH},
-                    start=0,
-                    end=0,
-                )
+            det = Detection(
+                category="archive_warning",
+                value="archive_max_depth_reached",
+                metadata={"depth": depth, "max_depth": self.MAX_DEPTH},
+                start=0,
+                end=0,
             )
+            detections.append(det)
+
+            # expose in metadata
+            ctx.metadata.setdefault("archive_warnings", []).append({
+                "value": det.value,
+                "depth": depth,
+                "max_depth": self.MAX_DEPTH,
+            })
             return
+
+        # record archive type being processed
+        ctx.metadata.setdefault("archive_types", []).append(archive_type)
 
         if archive_type == "zip":
             self._handle_zip(path, tmpdir, ctx, detections, depth)
@@ -127,15 +138,20 @@ class Plugin(IOCXPlugin):
         elif archive_type == "7z":
             self._handle_7z(path, tmpdir, ctx, detections, depth)
         elif archive_type == "tar_error":
-            detections.append(
-                Detection(
-                    category="archive_warning",
-                    value="archive_tar_error",
-                    metadata={"path": path},
-                    start=0,
-                    end=0,
-                )
+            det = Detection(
+                category="archive_warning",
+                value="archive_tar_error",
+                metadata={"path": path},
+                start=0,
+                end=0,
             )
+            detections.append(det)
+
+            # expose in metadata
+            ctx.metadata.setdefault("archive_warnings", []).append({
+                "value": det.value,
+                "path": path,
+            })
 
     # ----------------------------------------------------------------------
     # ZIP Handling
