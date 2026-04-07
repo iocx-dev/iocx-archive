@@ -58,7 +58,7 @@ class Plugin(IOCXPlugin):
         detections.append(
             Detection(
                 category="archive",
-                value=f"{archive_type}: {os.path.basename(path)} (depth {depth})",
+                value=f"{archive_type}: {os.path.basename(path)}",
                 metadata={"archive_type": archive_type, "depth": depth},
                 start=0,
                 end=0,
@@ -199,8 +199,8 @@ class Plugin(IOCXPlugin):
                     detections.append(
                         Detection(
                             category="archive_info",
-                            value=f"extracted_entry: {info.filename} (depth {depth + 1})",
-                            metadata={"entry_name": info.filename},
+                            value=f"extracted_entry: {info.filename}",
+                            metadata={"entry_name": info.filename, "depth": {depth + 1}},
                             start=0,
                             end=0,
                         )
@@ -291,8 +291,8 @@ class Plugin(IOCXPlugin):
                     detections.append(
                         Detection(
                             category="archive_info",
-                            value="archive_entry_extracted",
-                            metadata={"entry_name": member.name},
+                            value=f"extracted_entry: {member.name}",
+                            metadata={"entry_name": member.name, "depth": {depth + 1}},
                             start=0,
                             end=0,
                         )
@@ -413,8 +413,8 @@ class Plugin(IOCXPlugin):
                     detections.append(
                         Detection(
                             category="archive_info",
-                            value="archive_entry_extracted",
-                            metadata={"entry_name": name},
+                            value=f"extracted_entry: {name}",
+                            metadata={"entry_name": name, "depth": {depth + 1}},
                             start=0,
                             end=0,
                         )
