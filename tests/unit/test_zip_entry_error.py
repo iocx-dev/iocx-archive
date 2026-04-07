@@ -4,25 +4,7 @@ import tempfile
 import pytest
 
 from iocx_archive.plugin import Plugin
-
-
-class FakeEngine:
-    def __init__(self, plugin):
-        self.plugin = plugin
-        self.analyzed = []
-
-    def analyze_file(self, path, depth=0):
-        # No recursion in this test
-        self.analyzed.append((path, depth))
-        return []
-
-
-class FakeCtx:
-    def __init__(self, path, engine, depth=0):
-        self.path = path
-        self.engine = engine
-        self.depth = depth
-        self.metadata = {}
+from conftest import FakeEngine, FakeCtx
 
 
 def make_simple_zip(path):

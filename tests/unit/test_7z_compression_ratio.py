@@ -3,22 +3,7 @@ import types
 import tempfile
 from iocx_archive.plugin import Plugin
 import iocx_archive.plugin as plugin_module
-
-
-class FakeEngine:
-    def __init__(self, plugin):
-        self.plugin = plugin
-
-    def analyze_file(self, path, depth=0):
-        return []
-
-
-class FakeCtx:
-    def __init__(self, path, engine, depth=0):
-        self.path = path
-        self.engine = engine
-        self.depth = depth
-        self.metadata = {}
+from conftest import FakeEngine, FakeCtx
 
 
 def test_7z_suspicious_compression_ratio(monkeypatch):

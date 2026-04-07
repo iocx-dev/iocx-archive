@@ -14,11 +14,24 @@ class FakeEngine:
     def __init__(self, plugin):
         self.plugin = plugin
         self.analyzed = []
+        self.depth_stack = [0]
 
-    def analyze_file(self, path, depth=0):
-        self.analyzed.append((path, depth))
-        ctx = FakeCtx(path, self, depth)
-        return self.plugin.detect("", ctx)
+    @property
+    def depth(self):
+        return self.depth_stack[-1]
+
+    def analyze_file(self, path, depth=None):
+        if depth is None:
+            depth = self.depth
+
+        self.depth_stack.append(depth + 1)
+
+        try:
+            self.analyzed.append((path, depth))
+            ctx = FakeCtx(path, self, depth)
+            return self.plugin.detect("", ctx)
+        finally:
+            self.depth_stack.pop()
 
 
 class FakeCtx:
